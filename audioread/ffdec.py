@@ -165,11 +165,6 @@ class FFmpegAudioFile(object):
                 finally:
                     windows_error_mode_lock.release()
 
-        # Start another thread to consume the standard output of the
-        # process, which contains raw audio data.
-        self.stdout_reader = QueueReaderThread(self.proc.stdout, block_size)
-        self.stdout_reader.start()
-
         # Read relevant information from stderr.
         self._get_info()
 
@@ -179,35 +174,16 @@ class FFmpegAudioFile(object):
         self.stderr_reader = QueueReaderThread(self.proc.stderr)
         self.stderr_reader.start()
 
-    def read_data(self, timeout=10.0):
+    def read_data(self, block_samples=1024):
         """Read blocks of raw PCM data from the file."""
-        # Read from stdout in a separate thread and consume data from
-        # the queue.
-        start_time = time.time()
         while True:
-            # Wait for data to be available or a timeout.
             data = None
-            try:
-                data = self.stdout_reader.queue.get(timeout=timeout)
-                if data:
-                    yield data
-                else:
-                    # End of file.
-                    break
-            except queue.Empty:
-                # Queue read timed out.
-                end_time = time.time()
-                if not data:
-                    if end_time - start_time >= timeout:
-                        # Nothing interesting has happened for a while --
-                        # FFmpeg is probably hanging.
-                        raise ReadTimeoutError('ffmpeg output: {}'.format(
-                            ''.join(self.stderr_reader.queue.queue)
-                        ))
-                    else:
-                        start_time = end_time
-                        # Keep waiting.
-                        continue
+            data = self.proc.stdout.read(block_samples * self.channels * 2)
+            if data:
+                yield data
+            else:
+                # End of file.
+                break
 
     def _get_info(self):
         """Reads the tool's output from its stderr stream, extracts the
